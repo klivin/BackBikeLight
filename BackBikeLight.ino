@@ -32,7 +32,7 @@ RF24 radio(RADIO_PIN_CE,RADIO_PIN_CSN);
 // Radio pipe addresses for the 2 nodes to communicate.
 //const uint64_t pipes[2] = { 0xF0F0F0F0E1LL, 0xF0F0F0F0D2LL };
 //const uint64_t pipes[2] = { 0xF0F0F0F0E1LL, 0xF0F0F0F0D2LL };
-const uint64_t writingPipe = 0xF0F0F0AA;
+const uint64_t readingPipe = 0xF0F0F0AA;
 
 // The debug-friendly names of those roles
 int retryCounter = 4;
@@ -165,14 +165,9 @@ void rf24Init () {
   mySerial.println("Starting Radio Initialization"); 
 
   radio.begin();
-  // Setting Power amplification to highest for testing
-  radio.setPALevel(RF24_PA_MAX);
-  // optionally, increase the delay between retries & # of retries
-  radio.setRetries(15,15);
-  // optionally, reduce the payload size.  seems to
-  // improve reliability
-  //  radio.setPayloadSize(8);
-  radio.openWritingPipe(writingPipe);
+  radio.openReadingPipe(1,readingPipe);
+  radio.startListening();
+
   radio.printDetails();
 //  char *moreDetail = radio.getStats();
 //  mySerial.println(moreDetail);
@@ -365,20 +360,38 @@ void loop()
     signalTimer.run();
   }
 
-  bool receivedAudioModemInput = false;
-  LedState newState = checkModemForData();
-  if (LED_STATE_NONE != newState) {
-      mySerial.print("Received New State: "); 
-      mySerial.println(newState); 
-      currentLedState = newState;
-      receivedAudioModemInput = true;
-  }
   bool buttonStateDidChange = buttonStateChanged();
-  if (retryCounter != 3 || buttonStateDidChange || receivedAudioModemInput)
+  if (retryCounter != 3 || buttonStateDidChange)
   {
 //    // broadcastMessage(currentLedState);
   }
+  
+  if ( radio.available() ) {
 
+    mySerial.println("Radio is available");
+
+    // Dump the payloads until we've gotten everything
+    bool done = false;
+    while (!done)
+    {
+      int messageLen = sizeof(message);
+
+      // Fetch the payload, and see if this was the last one.
+      done = radio.read( &message, messageLen );
+//        currentLedState = message[MESSAGE_LED_STATE];
+      boolean isValid = validateMessage(message);
+      if (!isValid) {
+        mySerial.println("Got invalid radio read\n\r");
+        done = true;
+        break; 
+      }
+      currentLedState = message;
+
+      // Spew it
+      mySerial.println("Got buttons\n\r");
+      mySerial.println(message);
+    }
+  }
   displayLedsForState(currentLedState);
 
   // delay(STANDARD_DELAY_MILLI);
@@ -502,3 +515,20 @@ void allOn() {
     Tlc.setAll(4095);
     Tlc.update();
 }
+
+// RADIO Helpers
+
+boolean validateMessage(unsigned int message) {
+   for (int i = LED_STATE_RIGHT; i< LED_TOTAL_STATES; i++) {
+      if (i==message) {
+         return true; 
+      }
+   } 
+   mySerial.println("Invalid Message: ");
+   char buf[20];
+   sprintf(buf, "** %d **", message);
+   mySerial.println(buf);
+
+   return false;
+}
+
